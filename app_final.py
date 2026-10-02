@@ -1,63 +1,68 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import os
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
+from streamlit_gsheets import GSheetsConnection
 import io
 
 st.set_page_config(page_title="Gestão de Fretes", layout="wide", page_icon="🚚")
 
-DB_FRETE = "dados_fretes.csv"
-DB_MOT = "cadastro_motoristas.csv"
-DB_VEIC = "cadastro_veiculos.csv"
-DB_LOC = "cadastro_locais.csv"
+st.title("🚚 Controlo de Fretes e Comissões (Google Sheets)")
 
-def inicializar_bases():
-    if not os.path.exists(DB_FRETE) or os.path.getsize(DB_FRETE) == 0:
-        pd.DataFrame(columns=["Data", "Motorista", "Placa", "Local", "Preço (R$)", "Volume (m³)"]).to_csv(DB_FRETE, index=False, encoding="utf-8")
-    if not os.path.exists(DB_MOT) or os.path.getsize(DB_MOT) == 0:
-        pd.DataFrame(columns=["Nome"]).to_csv(DB_MOT, index=False, encoding="utf-8")
-    if not os.path.exists(DB_VEIC) or os.path.getsize(DB_VEIC) == 0:
-        pd.DataFrame(columns=["Placa"]).to_csv(DB_VEIC, index=False, encoding="utf-8")
-    if not os.path.exists(DB_LOC) or os.path.getsize(DB_LOC) == 0:
-        pd.DataFrame(columns=["Rota"]).to_csv(DB_LOC, index=False, encoding="utf-8")
+# =========================================================================
+# CONEXÃO COM O GOOGLE SHEETS
+# =========================================================================
+# O Streamlit gerencia a conexão de forma segura usando o st.connection
+try:
+    conn = st.connection("gsheets", type=GSheetsConnection)
+    
+    # Lendo as 4 abas da planilha direto da nuvem do Google
+    df_fretes = conn.read(worksheet="dados_fretes", ttl=0)
+    df_motoristas = conn.read(worksheet="cadastro_motoristas", ttl=0)
+    df_veiculos = conn.read(worksheet="cadastro_veiculos", ttl=0)
+    df_locais = conn.read(worksheet="cadastro_locais", ttl=0)
+    
+    # Tratando colunas vazias ou nulas para não quebrar o Pandas
+    df_fretes["Data"] = pd.to_datetime(df_fretes["Data"], errors="coerce")
+except Exception as e:
+    st.error("⚠️ Erro ao conectar com o Google Sheets. Verifique as credenciais.")
+    st.stop()
 
-inicializar_bases()
-
-df_fretes = pd.read_csv(DB_FRETE, parse_dates=["Data"], encoding="utf-8")
-df_motoristas = pd.read_csv(DB_MOT, encoding="utf-8")
-df_veiculos = pd.read_csv(DB_VEIC, encoding="utf-8")
-df_locais = pd.read_csv(DB_LOC, encoding="utf-8")
-
-st.title("🚚 Controlo de Fretes e Comissões")
-
-# BARRA LATERAL - CADASTROS DE APOIO
+# =========================================================================
+# BARRA LATERAL - CADASTROS DE APOIO (SALVANDO NO GOOGLE)
+# =========================================================================
 st.sidebar.header("🗂️ Cadastros de Apoio")
 
 with st.sidebar.expander("👤 Cadastrar Motorista"):
     novo_mot = st.text_input("Nome do Motorista", key="reg_mot").strip().upper()
     if st.button("Salvar Motorista", key="btn_mot"):
-        if novo_mot and novo_mot not in df_motoristas["Nome"].values:
-            pd.DataFrame([{"Nome": novo_mot}]).to_csv(DB_MOT, mode='a', header=False, index=False, encoding="utf-8")
-            st.success(f"{novo_mot} cadastrado!")
+        if novo_mot and (df_motoristas.empty or novo_mot not in df_motoristas["Nome"].values):
+            novo_df = pd.DataFrame([{"Nome": novo_mot}])
+            df_atualizado = pd.concat([df_motoristas, novo_df], ignore_index=True)
+            conn.update(worksheet="cadastro_motoristas", data=df_atualizado)
+            st.success(f"{novo_mot} cadastrado no Google Drive!")
             st.rerun()
 
 with st.sidebar.expander("🚛 Cadastrar Camião (Placa)"):
     nova_placa = st.text_input("Placa do Veículo", key="reg_placa").strip().upper()
     if st.button("Salvar Placa", key="btn_placa"):
-        if nova_placa and nova_placa not in df_veiculos["Placa"].values:
-            pd.DataFrame([{"Placa": nova_placa}]).to_csv(DB_VEIC, mode='a', header=False, index=False, encoding="utf-8")
-            st.success(f"Placa {nova_placa} cadastrada!")
+        if nova_placa and (df_veiculos.empty or nova_placa not in df_veiculos["Placa"].values):
+            novo_df = pd.DataFrame([{"Placa": nova_placa}])
+            df_atualizado = pd.concat([df_veiculos, novo_df], ignore_index=True)
+            conn.update(worksheet="cadastro_veiculos", data=df_atualizado)
+            st.success(f"Placa {nova_placa} cadastrada no Google Drive!")
             st.rerun()
 
 with st.sidebar.expander("📍 Cadastrar Local / Rota"):
     nova_rota = st.text_input("Local (Ex: SP x RJ)", key="reg_rota").strip().upper()
     if st.button("Salvar Local", key="btn_local"):
-        if nova_rota and nova_rota not in df_locais["Rota"].values:
-            pd.DataFrame([{"Rota": nova_rota}]).to_csv(DB_LOC, mode='a', header=False, index=False, encoding="utf-8")
-            st.success(f"Rota {nova_rota} cadastrada!")
+        if nova_rota and (df_locais.empty or nova_rota not in df_locais["Rota"].values):
+            novo_df = pd.DataFrame([{"Rota": nova_rota}])
+            df_atualizado = pd.concat([df_locais, novo_df], ignore_index=True)
+            conn.update(worksheet="cadastro_locais", data=df_atualizado)
+            st.success(f"Rota {nova_rota} cadastrada no Google Drive!")
             st.rerun()
 
 # ABAS PRINCIPAIS
@@ -65,9 +70,9 @@ aba_cadastro, aba_relatorio, aba_graficos = st.tabs(["📝 Lançar Frete", "📊
 
 with aba_cadastro:
     st.header("Registar Novo Frete")
-    lista_mots = sorted(df_motoristas["Nome"].tolist())
-    lista_veic = sorted(df_veiculos["Placa"].tolist())
-    lista_locs = sorted(df_locais["Rota"].tolist())
+    lista_mots = sorted(df_motoristas["Nome"].dropna().tolist()) if not df_motoristas.empty else []
+    lista_veic = sorted(df_veiculos["Placa"].dropna().tolist()) if not df_veiculos.empty else []
+    lista_locs = sorted(df_locais["Rota"].dropna().tolist()) if not df_locais.empty else []
     
     if not lista_mots or not lista_veic or not lista_locs:
         st.info("⚠️ Use os menus da barra lateral esquerda para cadastrar ao menos: 1 Motorista, 1 Camião e 1 Local.")
@@ -91,34 +96,40 @@ with aba_cadastro:
                 else:
                     valor_final_multiplicado = float(preco_por_m3) * float(quantidade_m3)
                     novo_registo = pd.DataFrame([{
-                        "Data": pd.to_datetime(data_frete),
+                        "Data": data_frete.strftime('%Y-%m-%d'),
                         "Motorista": motorista_sel,
                         "Placa": placa_sel,
                         "Local": local_sel,
                         "Preço (R$)": valor_final_multiplicado,
                         "Volume (m³)": quantidade_m3
                     }])
-                    novo_registo.to_csv(DB_FRETE, mode='a', header=False, index=False, encoding="utf-8")
-                    st.success(f"✅ Gravado! Total: R$ {valor_final_multiplicado:,.2f}")
+                    df_atualizado = pd.concat([df_fretes, novo_registo], ignore_index=True)
+                    conn.update(worksheet="dados_fretes", data=df_atualizado)
+                    st.success(f"✅ Gravado no Google Sheets! Total: R$ {valor_final_multiplicado:,.2f}")
                     st.rerun()
 
 with aba_relatorio:
     st.header("Consulta de Histórico")
-    if df_fretes.empty:
-        st.info("Nenhum frete encontrado na base de dados.")
+    # Filtra linhas totalmente em branco que o Google Sheets possa trazer
+    df_fretes_validos = df_fretes.dropna(subset=["Motorista", "Placa"]) if not df_fretes.empty else pd.DataFrame()
+    
+    if df_fretes_validos.empty:
+        st.info("Nenhum frete encontrado na planilha do Google.")
     else:
         st.subheader("Filtros de Pesquisa")
         f_col1, f_col2, f_col3, f_col4 = st.columns(4)
         with f_col1:
-            periodo = st.date_input("Intervalo de Datas", [df_fretes["Data"].min().date(), df_fretes["Data"].max().date()])
+            data_minima = df_fretes_validos["Data"].min().date() if pd.notnull(df_fretes_validos["Data"].min()) else datetime.now().date()
+            data_maxima = df_fretes_validos["Data"].max().date() if pd.notnull(df_fretes_validos["Data"].max()) else datetime.now().date()
+            periodo = st.date_input("Intervalo de Datas", [data_minima, data_maxima])
         with f_col2:
-            motorista_filtrado = st.selectbox("Filtrar por Motorista", ["TODOS"] + sorted(df_fretes["Motorista"].unique().tolist()))
+            motorista_filtrado = st.selectbox("Filtrar por Motorista", ["TODOS"] + sorted(df_fretes_validos["Motorista"].unique().tolist()))
         with f_col3:
-            placa_filtrada = st.selectbox("Filtrar por Placa", ["TODOS"] + sorted(df_fretes["Placa"].unique().tolist()))
+            placa_filtrada = st.selectbox("Filtrar por Placa", ["TODOS"] + sorted(df_fretes_validos["Placa"].unique().tolist()))
         with f_col4:
-            local_filtrado = st.selectbox("Filtrar por Local", ["TODOS"] + sorted(df_fretes["Local"].unique().tolist()))
+            local_filtrado = st.selectbox("Filtrar por Local", ["TODOS"] + sorted(df_fretes_validos["Local"].unique().tolist()))
             
-        df_filtrado = df_fretes.copy()
+        df_filtrado = df_fretes_validos.copy()
         if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
             data_inicio, data_fim = periodo
             df_filtrado = df_filtrado[(df_filtrado["Data"].dt.date >= data_inicio) & (df_filtrado["Data"].dt.date <= data_fim)]
@@ -159,69 +170,18 @@ with aba_relatorio:
             eixo_y = 665
             p.setFont("Helvetica", 9)
             
-            if not dados_tabela.empty:
-                for idx, linha in dados_tabela.iterrows():
-                    data_formatada = linha["Data"].strftime('%d/%m/%Y')
-                    p.drawString(50, eixo_y, str(data_formatada))
-                    p.drawString(120, eixo_y, str(linha["Motorista"])[:18])
-                    p.drawString(230, eixo_y, str(linha["Placa"]))
-                    p.drawString(290, eixo_y, str(linha["Local"])[:20])
-                    p.drawString(420, eixo_y, f"{linha['Volume (m³)']:,.2f}")
-                    p.drawString(480, eixo_y, f"R$ {linha['Preço (R$)']:,.2f}")
-                    eixo_y -= 20
-                    if eixo_y < 100:
-                        break
+            for idx, linha in dados_tabela.iterrows():
+                data_formatada = linha["Data"].strftime('%d/%m/%Y')
+                p.drawString(50, eixo_y, str(data_formatada))
+                p.drawString(120, eixo_y, str(linha["Motorista"])[:18])
+                p.drawString(230, eixo_y, str(linha["Placa"]))
+                p.drawString(290, eixo_y, str(linha["Local"])[:20])
+                p.drawString(420, eixo_y, f"{linha['Volume (m³)']:,.2f}")
+                p.drawString(480, eixo_y, f"R$ {linha['Preço (R$)']:,.2f}")
+                eixo_y -= 20
+                if eixo_y < 100:
+                    break
             
             p.line(50, eixo_y + 10, 550, eixo_y + 10)
             p.setFont("Helvetica-Bold", 10)
             p.drawString(50, eixo_y - 10, f"Total Viagens: {len(dados_tabela)}")
-            p.drawString(50, eixo_y - 25, f"Volume Geral: {volume_total:,.2f} m³")
-            p.drawString(50, eixo_y - 40, f"Faturamento Bruto: R$ {faturamento_total:,.2f}")
-            p.setFillColorRGB(0.1, 0.5, 0.1)
-            p.drawString(50,_y:=eixo_y - 60, f"VALOR TOTAL DA COMISSÃO ({porcentagem_comissao}%): R$ {valor_comissao_calculado:,.2f}")
-            
-            p.showPage()
-            p.save()
-            buffer.seek(0)
-            return buffer
-
-        st.markdown("### Métricas do Período")
-               # Configuração das 4 colunas de métricas na tela
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Total de Viagens", len(df_filtrado))
-        m2.metric("Faturamento Acumulado", f"R$ {faturamento_total:,.2f}")
-        m3.metric("Volume Movimentado", f"{volume_total:,.2f} m³")
-        m4.metric(f"Comissão ({porcentagem_comissao}%)", f"R$ {valor_comissao_calculado:,.2f}")
-        
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Gerando os dados do PDF
-        pdf_data = gerar_pdf_relatorio_completo(df_filtrado)
-        
-        # O BOTÃO QUE ESTAVA FALTANDO (Inserido corretamente no bloco do Relatório):
-        st.download_button(
-            label="🖨️ Gerar PDF com Todas as Viagens",
-            data=pdf_data,
-            file_name=f"relatorio_viagens_{motorista_filtrado}.pdf",
-            mime="application/pdf"
-        )
-        
-        st.markdown("---")
-        st.dataframe(df_filtrado, use_container_width=True)
-
-# =========================================================================
-# 3. ABA DE GRÁFICOS (Alinhada corretamente fora da aba de relatórios)
-# =========================================================================
-with aba_graficos:
-    st.header("Análise de Desempenho")
-    if df_fretes.empty:
-        st.info("Registe fretes para visualizar as métricas visuais.")
-    else:
-        analise_tipo = st.radio("Selecione o Foco:", ["Por Motorista", "Por Camião (Placa)"], horizontal=True)
-        col_g1, col_g2 = st.columns(2)
-        if analise_tipo == "Por Motorista":
-            with col_g1: st.plotly_chart(px.bar(df_fretes.groupby("Motorista", as_index=False)["Preço (R$)"].sum(), x="Motorista", y="Preço (R$)", title="Faturamento por Motorista"), use_container_width=True)
-            with col_g2: st.plotly_chart(px.pie(df_fretes.groupby("Motorista", as_index=False)["Volume (m³)"].sum(), values="Volume (m³)", names="Motorista", title="Volume por Motorista", hole=0.3), use_container_width=True)
-        else:
-            with col_g1: st.plotly_chart(px.bar(df_fretes.groupby("Placa", as_index=False)["Preço (R$)"].sum(), x="Placa", y="Preço (R$)", title="Receita por Camião"), use_container_width=True)
-            with col_g2: st.plotly_chart(px.bar(df_fretes.groupby("Placa", as_index=False).size().rename(columns={"size": "Viagens"}), x="Placa", y="Viagens", title="Viagens por Camião"), use_container_width=True)
