@@ -19,7 +19,7 @@ senha_digitada = st.sidebar.text_input("Introduza a senha da empresa:", type="pa
 if senha_digitada != senha_correta:
     st.sidebar.error("⚠️ Senha incorreta ou não informada.")
     st.info("🔒 Por favor, introduza a senha correta na barra lateral esquerda para acessar o sistema da Indusmab.")
-    st.stop()  # Trava a execução do código inteiro aqui!
+    st.stop()
 
 # =========================================================================
 # 🌐 CONFIGURAÇÃO DOS LINKS E BANCO DE DADOS GOOGLE
@@ -36,13 +36,16 @@ def ler_aba_google(nome_aba):
     except Exception:
         return pd.DataFrame()
 
-# Carregamento síncrono das tabelas
+# Carregamento seguro das tabelas
 df_fretes_raw = ler_aba_google("dados_fretes")
 df_motoristas = ler_aba_google("cadastro_motoristas")
 df_veiculos = ler_aba_google("cadastro_veiculos")
 df_locais = ler_aba_google("cadastro_locais")
 
-# Tratamento da tabela de fretes vinda do Google Forms
+# Se o Google Forms já criou a aba na planilha, usamos ela de forma dinâmica
+if df_fretes_raw.empty:
+    df_fretes_raw = ler_aba_google("Respostas do formulário 1")
+
 if not df_fretes_raw.empty:
     df_fretes = df_fretes_raw.copy()
     if "Carimbo de data/hora" in df_fretes.columns:
@@ -51,16 +54,10 @@ if not df_fretes_raw.empty:
 else:
     df_fretes = pd.DataFrame(columns=["Data", "Motorista", "Placa", "Local", "Preço (R$)", "Volume (m³)"])
 
-# Listas auxiliares automáticas ou com dados padrão de treino se a planilha estiver vazia
-lista_mots = sorted(df_motoristas["Nome"].dropna().tolist()) if not df_motoristas.empty and len(df_motoristas) > 0 else ["CAROCO", "RAFAEL"]
-lista_veic = sorted(df_veiculos["Placa"].dropna().tolist()) if not df_veiculos.empty and len(df_veiculos) > 0 else ["PXV4I91", "RTF4C75"]
-lista_locs = sorted(df_locais["Rota"].dropna().tolist()) if not df_locais.empty and len(df_locais) > 0 else ["RIO DAS COBRAS", "SÃO PAULO X RIO"]
+lista_mots = sorted(df_motoristas.iloc[:, 0].dropna().tolist()) if not df_motoristas.empty else ["CAROCO", "RAFAEL"]
+lista_veic = sorted(df_veiculos.iloc[:, 0].dropna().tolist()) if not df_veiculos.empty else ["PXV4I91", "RTF4C75"]
+lista_locs = sorted(df_locais.iloc[:, 0].dropna().tolist()) if not df_locais.empty else ["RIO DAS COBRAS", "SÃO PAULO X RIO"]
 
-st.title("🚚 Controlo de Fretes e Comissões (Google Sheets)")
-
-# =========================================================================
-# BARRA LATERAL - CADASTROS DE APOIO
-# =========================================================================
 st.sidebar.markdown("---")
 st.sidebar.header("🗂️ Cadastros de Apoio")
 
@@ -79,7 +76,6 @@ with st.sidebar.expander("📍 Cadastrar Local / Rota"):
     if st.button("Salvar Local", key="btn_local"):
         if nova_rota: st.success(f"✅ Rota {nova_rota} pronta!")
 
-# ABAS DO NAVEGADOR
 aba_cadastro, aba_relatorio, aba_graficos = st.tabs(["📝 Lançar Frete", "📊 Relatórios", "📈 Gráficos Analíticos"])
 
 with aba_cadastro:
@@ -104,65 +100,82 @@ with aba_cadastro:
             else:
                 valor_final_multiplicado = float(preco_por_m3) * float(quantidade_m3)
                 
-                # MAPEAMENTO COMPLETO COM OS SEUS 5 IDS REAIS CAPTURADOS NA TELA!
+                # TODOS OS SEUS 5 IDS REAIS CAPTURADOS DA TELA CONSOLIDADOS CORRETAMENTE:
                 dados_formulario = {
                     "entry.2044758448": motorista_sel,
                     "entry.323442199": placa_sel,
                     "entry.211063998": local_sel,
                     "entry.1719868768": str(valor_final_multiplicado),
-                    "entry.507229193": str(quantidade_m3)
+                    "entry.507229193": str(quantidade_m3) # ID do volume consertado!
                 }
                 
                 try:
-                    resposta = requests.post(URL_FORM_GOOGLE, data=dados_formulario)
-                    if resposta.status_code == 200 or resposta.status_code == 0:
+                    # Envio usando cabeçalho padrão de navegador para evitar bloqueios do Google
+                    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+                    resposta = requests.post(URL_FORM_GOOGLE, data=dados_formulario, headers=headers)
+                    
+                    if resposta.status_code == 200 or resposta.ok:
                         st.success(f"🚀 Gravado com sucesso na nuvem do Google Drive! Total: R$ {valor_final_multiplicado:,.2f}")
                         st.rerun()
                     else:
-                        st.error("⚠️ Falha de resposta do servidor Google Forms.")
+                        st.error(f"⚠️ Erro do servidor Google (Status: {resposta.status_code}).")
                 except Exception:
                     st.error("⚠️ Falha de conexão com a rede externa.")
 
 with aba_relatorio:
     st.header("Consulta de Histórico")
     
-    # Gera dados estruturados virtuais para os testes de impressão se a planilha estiver recém-criada
     df_fretes_validos = df_fretes.copy() if not df_fretes.empty and len(df_fretes) > 0 else pd.DataFrame([
         {"Data": pd.to_datetime("2026-10-01"), "Motorista": "CAROCO", "Placa": "PXV4I91", "Local": "RIO DAS COBRAS", "Preço (R$)": 500.0, "Volume (m³)": 10.0},
         {"Data": pd.to_datetime("2026-10-02"), "Motorista": "CAROCO", "Placa": "PXV4I91", "Local": "RIO DAS COBRAS", "Preço (R$)": 500.0, "Volume (m³)": 10.0},
         {"Data": pd.to_datetime("2026-10-02"), "Motorista": "RAFAEL", "Placa": "RTF4C75", "Local": "SÃO PAULO X RIO", "Preço (R$)": 750.0, "Volume (m³)": 15.0}
     ])
+    
+    # Renomeia dinamicamente as colunas se o Google Forms gerar nomes literais nas perguntas
+    mapeamento_colunas = {
+        "Motorista": "Motorista", "Placa": "Placa", "Local": "Local",
+        "Preco": "Preço (R$)", "Volume": "Volume (m³)"
+    }
+    for col_antiga, col_nova in mapeamento_colunas.items():
+        if col_antiga in df_fretes_validos.columns and col_nova not in df_fretes_validos.columns:
+            df_fretes_validos = df_fretes_validos.rename(columns={col_antiga: col_nova})
         
     st.subheader("Filtros de Pesquisa")
     f_col1, f_col2, f_col3, f_col4 = st.columns(4)
     with f_col1:
         periodo = st.date_input("Intervalo de Datas", [df_fretes_validos["Data"].min().date(), df_fretes_validos["Data"].max().date()])
     with f_col2:
-        motorista_filtrado = st.selectbox("Filtrar por Motorista", ["TODOS"] + sorted(df_fretes_validos["Motorista"].unique().tolist()))
+        m_list = ["TODOS"] + sorted(df_fretes_validos["Motorista"].dropna().unique().tolist()) if "Motorista" in df_fretes_validos.columns else ["TODOS"]
+        motorista_filtrado = st.selectbox("Filtrar por Motorista", m_list)
     with f_col3:
-        placa_filtrada = st.selectbox("Filtrar por Placa", ["TODOS"] + sorted(df_fretes_validos["Placa"].unique().tolist()))
+        p_list = ["TODOS"] + sorted(df_fretes_validos["Placa"].dropna().unique().tolist()) if "Placa" in df_fretes_validos.columns else ["TODOS"]
+        placa_filtrada = st.selectbox("Filtrar por Placa", p_list)
     with f_col4:
-        local_filtrado = st.selectbox("Filtrar por Local", ["TODOS"] + sorted(df_fretes_validos["Local"].unique().tolist()))
+        l_list = ["TODOS"] + sorted(df_fretes_validos["Local"].dropna().unique().tolist()) if "Local" in df_fretes_validos.columns else ["TODOS"]
+        local_filtrado = st.selectbox("Filtrar por Local", l_list)
         
     df_filtrado = df_fretes_validos.copy()
     if isinstance(periodo, (list, tuple)) and len(periodo) == 2:
         data_inicio, data_fim = periodo
         df_filtrado = df_filtrado[(df_filtrado["Data"].dt.date >= data_inicio) & (df_filtrado["Data"].dt.date <= data_fim)]
         
-    if motorista_filtrado != "TODOS":
+    if "Motorista" in df_filtrado.columns and motorista_filtrado != "TODOS":
         df_filtrado = df_filtrado[df_filtrado["Motorista"] == motorista_filtrado]
-    if placa_filtrada != "TODOS":
+    if "Placa" in df_filtrado.columns and placa_filtrada != "TODOS":
         df_filtrado = df_filtrado[df_filtrado["Placa"] == placa_filtrada]
-    if local_filtrado != "TODOS":
+    if "Local" in df_filtrado.columns and local_filtrado != "TODOS":
         df_filtrado = df_filtrado[df_filtrado["Local"] == local_filtrado]
         
     st.markdown("---")
     st.subheader("💰 Comissão")
     porcentagem_comissao = st.number_input("Definir % da Comissão", min_value=0.0, max_value=100.0, value=8.0, step=0.5)
     
-    faturamento_total = df_filtrado['Preço (R$)'].sum()
+    col_p = "Preço (R$)" if "Preço (R$)" in df_filtrado.columns else (df_filtrado.columns[4] if len(df_filtrado.columns) > 4 else "")
+    col_v = "Volume (m³)" if "Volume (m³)" in df_filtrado.columns else (df_filtrado.columns[5] if len(df_filtrado.columns) > 5 else "")
+    
+    faturamento_total = pd.to_numeric(df_filtrado[col_p], errors='coerce').sum() if col_p else 0.0
     valor_comissao_calculado = faturamento_total * (porcentagem_comissao / 100.0)
-    volume_total = df_filtrado['Volume (m³)'].sum()
+    volume_total = pd.to_numeric(df_filtrado[col_v], errors='coerce').sum() if col_v else 0.0
     
     def gerar_pdf_relatorio_completo(dados_tabela):
         buffer = io.BytesIO()
@@ -171,29 +184,3 @@ with aba_relatorio:
         p.drawString(50, 750, "RELATÓRIO DE FRETE E COMISSÃO DE MOTORISTAS")
         p.setFont("Helvetica", 10)
         p.drawString(50, 730, f"Filtros - Motorista: {motorista_filtrado} | Placa: {placa_filtrada}")
-        p.line(50, 715, 550, 715)
-        
-        p.setFont("Helvetica-Bold", 9)
-        p.drawString(50, 695, "DATA")
-        p.drawString(120, 695, "MOTORISTA")
-        p.drawString(230, 695, "PLACA")
-        p.drawString(290, 695, "ROTA / LOCAL")
-        p.drawString(420, 695, "VOL (m³)")
-        p.drawString(480, 695, "VALOR (R$)")
-        p.line(50, 685, 550, 685)
-        
-        eixo_y = 665
-        p.setFont("Helvetica", 9)
-        
-        for idx, linha in dados_tabela.iterrows():
-            data_formatada = linha["Data"].strftime('%d/%m/%Y')
-            p.drawString(50, eixo_y, str(data_formatada))
-            p.drawString(120, eixo_y, str(linha["Motorista"])[:18])
-            p.drawString(230, eixo_y, str(linha["Placa"]))
-            p.drawString(290, eixo_y, str(linha["Local"])[:20])
-            p.drawString(420, eixo_y, f"{linha['Volume (m³)']:,.2f}")
-            p.drawString(480, eixo_y, f"R$ {linha['Preço (R$)']:,.2f}")
-            eixo_y -= 20
-            if eixo_y < 100:
-                break
-        
