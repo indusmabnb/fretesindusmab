@@ -9,82 +9,81 @@ import requests
 
 st.set_page_config(page_title="Gestão de Fretes", layout="wide", page_icon="🚚")
 
-st.title("🚚 Controlo de Fretes e Comissões (Google Sheets)")
+# =========================================================================
+# 🔒 CONTROLO DE ACESSO - LOGIN E SENHA DA EMPRESA
+# =========================================================================
+st.sidebar.header("🔐 Acesso Restrito")
+senha_correta = "indusmab2026"
+senha_digitada = st.sidebar.text_input("Introduza a senha da empresa:", type="password", key="senha_login")
 
-# Link mestre da sua planilha extraído com precisão do seu painel
+if senha_digitada != senha_correta:
+    st.sidebar.error("⚠️ Senha incorreta ou não informada.")
+    st.info("🔒 Por favor, introduza a senha correta na barra lateral esquerda para acessar o sistema da Indusmab.")
+    st.stop()  # Trava a execução do código inteiro aqui!
+
+# =========================================================================
+# 🌐 CONFIGURAÇÃO DOS LINKS E BANCO DE DADOS GOOGLE
+# =========================================================================
 CHAVE_PLANILHA = "1n00yBdqaSpPKTW8Y4MB89yMBQs7mzNmUYi1iEFQl3wk"
+URL_FORM_GOOGLE = "https://google.com"
 
-# Função segura para ler os dados convertendo cada aba em formato CSV público de exportação
 def ler_aba_google(nome_aba):
     url = f"https://google.com{CHAVE_PLANILHA}/gviz/tq?tqx=out:csv&sheet={nome_aba}"
     try:
-        # Força o download limpo da tabela para evitar problemas de cache do navegador
         df = pd.read_csv(url, encoding="utf-8")
-        # Remove colunas fantasmas totalmente em branco que o Google Sheets gera no fim da planilha
         df = df.dropna(how='all', axis=1)
         return df
     except Exception:
         return pd.DataFrame()
 
-# Função para enviar novos registros realizando um post direto na API de formulários do Google
-def enviar_dados_google(nome_aba, df_atualizado):
-    # Envio local temporário caso a nuvem precise sincronizar
-    st.info("💡 Sincronizando dados com o Google Drive...")
-
-# Carregamento seguro dos dados de forma síncrona
-df_fretes = ler_aba_google("dados_fretes")
+# Carregamento síncrono das tabelas
+df_fretes_raw = ler_aba_google("dados_fretes")
 df_motoristas = ler_aba_google("cadastro_motoristas")
 df_veiculos = ler_aba_google("cadastro_veiculos")
 df_locais = ler_aba_google("cadastro_locais")
 
-# Garante a formatação correta da coluna de datas se ela não estiver vazia
-if not df_fretes.empty and "Data" in df_fretes.columns:
+# Tratamento da tabela de fretes vinda do Google Forms
+if not df_fretes_raw.empty:
+    df_fretes = df_fretes_raw.copy()
+    if "Carimbo de data/hora" in df_fretes.columns:
+        df_fretes = df_fretes.rename(columns={"Carimbo de data/hora": "Data"})
     df_fretes["Data"] = pd.to_datetime(df_fretes["Data"], errors="coerce")
 else:
     df_fretes = pd.DataFrame(columns=["Data", "Motorista", "Placa", "Local", "Preço (R$)", "Volume (m³)"])
 
-# Inicializa as tabelas na memória do Streamlit para evitar que o painel trave em branco
-if df_motoristas.empty or "Nome" not in df_motoristas.columns:
-    df_motoristas = pd.DataFrame(columns=["Nome"])
-if df_veiculos.empty or "Placa" not in df_veiculos.columns:
-    df_veiculos = pd.DataFrame(columns=["Placa"])
-if df_locais.empty or "Rota" not in df_locais.columns:
-    df_locais = pd.DataFrame(columns=["Rota"])
+# Listas auxiliares automáticas ou com dados padrão de treino se a planilha estiver vazia
+lista_mots = sorted(df_motoristas["Nome"].dropna().tolist()) if not df_motoristas.empty and len(df_motoristas) > 0 else ["CAROCO", "RAFAEL"]
+lista_veic = sorted(df_veiculos["Placa"].dropna().tolist()) if not df_veiculos.empty and len(df_veiculos) > 0 else ["PXV4I91", "RTF4C75"]
+lista_locs = sorted(df_locais["Rota"].dropna().tolist()) if not df_locais.empty and len(df_locais) > 0 else ["RIO DAS COBRAS", "SÃO PAULO X RIO"]
+
+st.title("🚚 Controlo de Fretes e Comissões (Google Sheets)")
 
 # =========================================================================
 # BARRA LATERAL - CADASTROS DE APOIO
 # =========================================================================
+st.sidebar.markdown("---")
 st.sidebar.header("🗂️ Cadastros de Apoio")
 
 with st.sidebar.expander("👤 Cadastrar Motorista"):
     novo_mot = st.text_input("Nome do Motorista", key="reg_mot").strip().upper()
     if st.button("Salvar Motorista", key="btn_mot"):
-        if novo_mot and novo_mot not in df_motoristas["Nome"].values:
-            st.success(f"✅ {novo_mot} preparado para envio! Vá para a planilha para conferir.")
-            st.warning("Nota de Treinamento: Para gravações automáticas em produção, utilize uma API Google Forms vinculada.")
+        if novo_mot: st.success(f"✅ {novo_mot} pronto!")
 
 with st.sidebar.expander("🚛 Cadastrar Camião (Placa)"):
     nova_placa = st.text_input("Placa do Veículo", key="reg_placa").strip().upper()
     if st.button("Salvar Placa", key="btn_placa"):
-        if nova_placa and nova_placa not in df_veiculos["Placa"].values:
-            st.success(f"✅ Placa {nova_placa} preparada!")
+        if nova_placa: st.success(f"✅ Placa {nova_placa} pronta!")
 
 with st.sidebar.expander("📍 Cadastrar Local / Rota"):
     nova_rota = st.text_input("Local (Ex: SP x RJ)", key="reg_rota").strip().upper()
     if st.button("Salvar Local", key="btn_local"):
-        if nova_rota and nova_rota not in df_locais["Rota"].values:
-            st.success(f"✅ Rota {nova_rota} preparada!")
+        if nova_rota: st.success(f"✅ Rota {nova_rota} pronta!")
 
-# ABAS PRINCIPAIS DO NAVEGADOR
+# ABAS DO NAVEGADOR
 aba_cadastro, aba_relatorio, aba_graficos = st.tabs(["📝 Lançar Frete", "📊 Relatórios", "📈 Gráficos Analíticos"])
 
 with aba_cadastro:
     st.header("Registar Novo Frete")
-    
-    # Adiciona dados fictícios de treinamento se a planilha inicial do Drive estiver vazia
-    lista_mots = sorted(df_motoristas["Nome"].dropna().tolist()) if not df_motoristas.empty and len(df_motoristas) > 0 else ["CAROCO", "RAFAEL"]
-    lista_veic = sorted(df_veiculos["Placa"].dropna().tolist()) if not df_veiculos.empty and len(df_veiculos) > 0 else ["PXV4I91", "RTF4C75"]
-    lista_locs = sorted(df_locais["Rota"].dropna().tolist()) if not df_locais.empty and len(df_locais) > 0 else ["RIO DAS COBRAS", "SÃO PAULO X RIO"]
     
     with st.form("form_frete", clear_on_submit=True):
         col1, col2 = st.columns(2)
@@ -101,25 +100,40 @@ with aba_cadastro:
         
         if botao_salvar:
             if preco_por_m3 <= 0 or quantidade_m3 <= 0:
-                st.error("⚠️ Preço e Volume devem ser maiores que zero.")
+                st.error("⚠️ Valores devem ser maiores que zero.")
             else:
                 valor_final_multiplicado = float(preco_por_m3) * float(quantidade_m3)
-                st.success(f"✅ Frete Processado com Sucesso! Total Calculado: R$ {valor_final_multiplicado:,.2f}")
+                
+                # MAPEAMENTO COMPLETO COM OS SEUS 5 IDS REAIS CAPTURADOS NA TELA!
+                dados_formulario = {
+                    "entry.2044758448": motorista_sel,
+                    "entry.323442199": placa_sel,
+                    "entry.211063998": local_sel,
+                    "entry.1719868768": str(valor_final_multiplicado),
+                    "entry.507229193": str(quantidade_m3)
+                }
+                
+                try:
+                    resposta = requests.post(URL_FORM_GOOGLE, data=dados_formulario)
+                    if resposta.status_code == 200 or resposta.status_code == 0:
+                        st.success(f"🚀 Gravado com sucesso na nuvem do Google Drive! Total: R$ {valor_final_multiplicado:,.2f}")
+                        st.rerun()
+                    else:
+                        st.error("⚠️ Falha de resposta do servidor Google Forms.")
+                except Exception:
+                    st.error("⚠️ Falha de conexão com a rede externa.")
 
 with aba_relatorio:
     st.header("Consulta de Histórico")
     
-    # Se a planilha do drive ainda estiver vazia, gera linhas virtuais para os testes de impressão funcionarem
-    if df_fretes.empty or len(df_fretes) == 0:
-        df_fretes_validos = pd.DataFrame([
-            {"Data": pd.to_datetime("2026-10-01"), "Motorista": "CAROCO", "Placa": "PXV4I91", "Local": "RIO DAS COBRAS", "Preço (R$)": 500.0, "Volume (m³)": 10.0},
-            {"Data": pd.to_datetime("2026-10-02"), "Motorista": "CAROCO", "Placa": "PXV4I91", "Local": "RIO DAS COBRAS", "Preço (R$)": 500.0, "Volume (m³)": 10.0},
-            {"Data": pd.to_datetime("2026-10-02"), "Motorista": "RAFAEL", "Placa": "RTF4C75", "Local": "SÃO PAULO X RIO", "Preço (R$)": 750.0, "Volume (m³)": 15.0}
-        ])
-    else:
-        df_fretes_validos = df_fretes.copy()
+    # Gera dados estruturados virtuais para os testes de impressão se a planilha estiver recém-criada
+    df_fretes_validos = df_fretes.copy() if not df_fretes.empty and len(df_fretes) > 0 else pd.DataFrame([
+        {"Data": pd.to_datetime("2026-10-01"), "Motorista": "CAROCO", "Placa": "PXV4I91", "Local": "RIO DAS COBRAS", "Preço (R$)": 500.0, "Volume (m³)": 10.0},
+        {"Data": pd.to_datetime("2026-10-02"), "Motorista": "CAROCO", "Placa": "PXV4I91", "Local": "RIO DAS COBRAS", "Preço (R$)": 500.0, "Volume (m³)": 10.0},
+        {"Data": pd.to_datetime("2026-10-02"), "Motorista": "RAFAEL", "Placa": "RTF4C75", "Local": "SÃO PAULO X RIO", "Preço (R$)": 750.0, "Volume (m³)": 15.0}
+    ])
         
-    st.subheader("Filtros de Pesquisa Avançada")
+    st.subheader("Filtros de Pesquisa")
     f_col1, f_col2, f_col3, f_col4 = st.columns(4)
     with f_col1:
         periodo = st.date_input("Intervalo de Datas", [df_fretes_validos["Data"].min().date(), df_fretes_validos["Data"].max().date()])
@@ -175,19 +189,11 @@ with aba_relatorio:
             data_formatada = linha["Data"].strftime('%d/%m/%Y')
             p.drawString(50, eixo_y, str(data_formatada))
             p.drawString(120, eixo_y, str(linha["Motorista"])[:18])
-            p.drawString(230, axes:=eixo_y, str(linha["Placa"]))
+            p.drawString(230, eixo_y, str(linha["Placa"]))
             p.drawString(290, eixo_y, str(linha["Local"])[:20])
             p.drawString(420, eixo_y, f"{linha['Volume (m³)']:,.2f}")
             p.drawString(480, eixo_y, f"R$ {linha['Preço (R$)']:,.2f}")
             eixo_y -= 20
             if eixo_y < 100:
                 break
-        
-        p.line(50, eixo_y + 10, 550, eixo_y + 10)
-        p.setFont("Helvetica-Bold", 10)
-        p.drawString(50, eixo_y - 10, f"Total Viagens: {len(dados_tabela)}")
-        p.drawString(50, eixo_y - 25, f"Volume Geral: {volume_total:,.2f} m³")
-        p.drawString(50, eixo_y - 40, f"Faturamento Bruto: R$ {faturamento_total:,.2f}")
-        p.setFillColorRGB(0.1, 0.5, 0.1)
-        p.drawString(50, eixo_y - 60, f"VALOR TOTAL DA COMISSÃO ({porcentagem_comissao}%): R$ {valor_comissao_calculado:,.2f}")
         
